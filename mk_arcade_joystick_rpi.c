@@ -150,7 +150,7 @@ struct mk_pad {
     enum mk_type type;
     char phys[32];
     int mcp23017addr;
-    int gpio_maps[12]
+    int gpio_maps[12];
 };
 
 struct mk_nin_gpio {
@@ -311,10 +311,10 @@ static void i2c_write(char dev_addr, char reg_addr, char *buf, unsigned short le
 
 static void i2c_read(char dev_addr, char reg_addr, char *buf, unsigned short len) {
 
-    i2c_write(dev_addr, reg_addr, NULL, 0);
-
     unsigned short bufidx;
     bufidx = 0;
+
+    i2c_write(dev_addr, reg_addr, NULL, 0);
 
     memset(buf, 0, len); // clear the buffer
 
@@ -471,7 +471,7 @@ static int __init mk_setup_pad(struct mk *mk, int idx, int pad_type_arg) {
             pr_err("Custom device needs gpio argument\n");
             return -EINVAL;
         } else if(gpio_cfg.nargs != 12){
-             pr_err("Invalid gpio argument\n", pad_type);
+             pr_err("Invalid gpio argument pad_type=%d\n", pad_type);
              return -EINVAL;
         }
     
@@ -505,15 +505,15 @@ static int __init mk_setup_pad(struct mk *mk, int idx, int pad_type_arg) {
 
     for (i = 0; i < 2; i++)
         input_set_abs_params(input_dev, ABS_X + i, -1, 1, 0, 0);
-	if (pad_type != MK_ARCADE_MCP23017)
-	{
-		for (i = 0; i < mk_max_arcade_buttons; i++)
+
+    if (pad_type != MK_ARCADE_MCP23017)
+    {
+	for (i = 0; i < mk_max_arcade_buttons; i++)
 			__set_bit(mk_arcade_gpio_btn[i], input_dev->keybit);
-	}
-	else { //Checking for MCP23017 so it gets 4 more buttons registered to it.
+    } else { //Checking for MCP23017 so it gets 4 more buttons registered to it.
 		for (i = 0; i < mk_max_mcp_arcade_buttons; i++)
 			__set_bit(mk_arcade_gpio_btn[i], input_dev->keybit);
-	}
+    }
 
     mk->pad_count[pad_type]++;
 
