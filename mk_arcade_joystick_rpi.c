@@ -17,7 +17,7 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
@@ -31,10 +31,12 @@
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/input.h>
+#include <linux/of_device.h>
 #include <linux/mutex.h>
 #include <linux/slab.h>
 
 #include <linux/ioport.h>
+#include <linux/version.h>
 #include <asm/io.h>
 
 
@@ -43,15 +45,10 @@ MODULE_DESCRIPTION("GPIO and MCP23017 Arcade Joystick Driver");
 MODULE_LICENSE("GPL");
 
 #define MK_MAX_DEVICES		2
-#define MK_MAX_BUTTONS      13
+#define MK_MAX_BUTTONS		13
 
-#ifdef RPI2
-#define PERI_BASE        0x3F000000
-#else
-#define PERI_BASE        0x20000000
-#endif
-
-#define GPIO_BASE                (PERI_BASE + 0x200000) /* GPIO controller */
+#define PERI_BASE	mk_bcm2708_peri_base
+#define GPIO_BASE	(PERI_BASE + 0x200000) /* GPIO controller */
 
 #define INP_GPIO(g) *(gpio+((g)/10)) &= ~(7<<(((g)%10)*3))
 #define OUT_GPIO(g) *(gpio+((g)/10)) |=  (1<<(((g)%10)*3))
@@ -64,6 +61,10 @@ MODULE_LICENSE("GPL");
 
 #define BSC1_BASE		(PERI_BASE + 0x804000)
 
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,15,0)
+#define HAVE_TIMER_SETUP
+#endif
 
 static volatile unsigned *gpio;
 
@@ -110,7 +111,7 @@ struct mk_pad {
     struct input_dev *dev;
     enum mk_type type;
     char phys[32];
-    int gpio_maps[MK_MAX_BUTTONS]
+    int gpio_maps[MK_MAX_BUTTONS];
 };
 
 struct mk_nin_gpio {
@@ -153,6 +154,50 @@ static const short mk_arcade_gpio_btn[] = {
 static const char *mk_names[] = {
     NULL, "GPIO Controller 1", "GPIO Controller 2", "MCP23017 Controller", "GPIO Controller 1" , "GPIO Controller 1", "GPIO Controller 2"
 };
+
+
+/* BCM board peripherals address base */
+static u32 mk_bcm2708_peri_base;
+
+/**
+ * mk_bcm_peri_base_probe - Find the peripherals address base for
+ * the running Raspberry Pi model. It needs a kernel with runtime Device-Tree
+ * overlay support.
+ *
+ * Based on the userland 'bcm_host' library code from
+ * https://github.com/raspberrypi/userland/blob/2549c149d8aa7f18ff201a1c0429cb26f9e2535a/host_applications/linux/libs/bcm_host/bcm_host.c#L150
+ *
+ * Reference: https://www.raspberrypi.org/documentation/hardware/raspberrypi/peripheral_addresses.md
+ *
+ * If any error occurs reading the device tree nodes/properties, then return 0.
+ */
+static u32 __init mk_bcm_peri_base_probe(void) {
+
+    char *path = "/soc";
+    struct device_node *dt_node;
+    u32 base_address = 1;
+
+    dt_node = of_find_node_by_path(path);
+    if (!dt_node) {
+        pr_err("failed to find device-tree node: %s\n", path);
+        return 0;
+    }
+
+    if (of_property_read_u32_index(dt_node, "ranges", 1, &base_address)) {
+        pr_err("failed to read range index 1\n");
+        return 0;
+    }
+
+    if (base_address == 0) {
+        if (of_property_read_u32_index(dt_node, "ranges", 2, &base_address)) {
+            pr_err("failed to read range index 2\n");
+            return 0;
+        }
+    }
+
+    return base_address == 1 ? 0x02000000 : base_address;
+}
+
 
 /* GPIO UTILS */
 static void setGpioPullUps(int pullUps) {
@@ -222,8 +267,13 @@ static void mk_process_packet(struct mk *mk) {
  * mk_timer() initiates reads of console pads data.
  */
 
+#ifdef HAVE_TIMER_SETUP
+static void mk_timer(struct timer_list *t) {
+    struct mk *mk = from_timer(mk, t, timer);
+#else
 static void mk_timer(unsigned long private) {
     struct mk *mk = (void *) private;
+#endif
     mk_process_packet(mk);
     mod_timer(&mk->timer, jiffies + MK_REFRESH_TIME);
 }
@@ -274,7 +324,7 @@ static int __init mk_setup_pad(struct mk *mk, int idx, int pad_type_arg) {
             pr_err("Custom device needs gpio argument\n");
             return -EINVAL;
         } else if(gpio_cfg.nargs != MK_MAX_BUTTONS){
-             pr_err("Invalid gpio argument\n", pad_type);
+             pr_err("Invalid gpio argument pad_type=%d\n", pad_type);
              return -EINVAL;
         }
     
@@ -380,7 +430,11 @@ static struct mk __init *mk_probe(int *pads, int n_pads) {
     }
 
     mutex_init(&mk->mutex);
+    #ifdef HAVE_TIMER_SETUP
+    timer_setup(&mk->timer, mk_timer, 0);
+    #else
     setup_timer(&mk->timer, mk_timer, (long) mk);
+    #endif
 
     for (i = 0; i < n_pads && i < MK_MAX_DEVICES; i++) {
         if (!pads[i])
@@ -421,6 +475,14 @@ static void mk_remove(struct mk *mk) {
 }
 
 static int __init mk_init(void) {
+    /* Get the BCM2708 peripheral address */
+    mk_bcm2708_peri_base = mk_bcm_peri_base_probe();
+    if (!mk_bcm2708_peri_base) {
+        pr_err("failed to find peripherals address base via device-tree - not a Raspberry PI board ?\n");
+        return -ENODEV;
+    }
+
+    pr_info("peripherals address base at 0x%08x\n", mk_bcm2708_peri_base);
     /* Set up gpio pointer for direct register access */
     if ((gpio = ioremap(GPIO_BASE, 0xB0)) == NULL) {
         pr_err("io remap failed\n");
