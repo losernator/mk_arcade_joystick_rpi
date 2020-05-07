@@ -338,14 +338,12 @@ static void mk_close(struct input_dev *dev) {
     mutex_unlock(&mk->mutex);
 }
 
-static int __init mk_setup_pad(struct mk *mk, int idx, int pad_type_arg) {
+static int __init mk_setup_pad(struct mk *mk, int idx, int pad_type) {
     struct mk_pad *pad = &mk->pads[idx];
     struct input_dev *input_dev;
-    int i, pad_type;
+    int i;
     int err;
-    pr_err("pad type : %d\n",pad_type_arg);
-
-    pad_type = pad_type_arg;
+    pr_info("pad type : %d\n", pad_type);
 
     if (pad_type < 1 || pad_type >= MK_MAX) {
         pr_err("Pad type %d unknown\n", pad_type);
@@ -372,13 +370,12 @@ static int __init mk_setup_pad(struct mk *mk, int idx, int pad_type_arg) {
             pr_err("Custom device needs gpio argument\n");
             return -EINVAL;
         } else if(gpio_cfg2.nargs != MK_MAX_BUTTONS){
-             pr_err("Invalid gpio argument\n", pad_type);
+             pr_err("Invalid gpio argument pad_type=%d\n", pad_type);
              return -EINVAL;
         }
     
     }
 
-    pr_err("pad type : %d\n",pad_type);
     pad->dev = input_dev = input_allocate_device();
     if (!input_dev) {
         pr_err("Not enough memory for input device\n");
@@ -442,7 +439,7 @@ static int __init mk_setup_pad(struct mk *mk, int idx, int pad_type_arg) {
     } else {
         setGpioPullUps(getPullUpMask(pad->gpio_maps));
     }
-    printk("GPIO configured for pad%d\n", idx);
+    pr_info("GPIO configured for pad%d\n", idx);
 
     err = input_register_device(pad->dev);
     if (err)
