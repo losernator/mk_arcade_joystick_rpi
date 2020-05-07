@@ -106,12 +106,32 @@ MODULE_LICENSE("GPL");
 
 #define CLEAR_STATUS	BSC_S_CLKT|BSC_S_ERR|BSC_S_DONE
 
+/*
+ * defines for BCM 2711
+ *
+ * refer to "Chapter 5. General Purpose I/O (GPIO)"
+ * in "BCM2711 ARM Peripherals", 2020-02-05
+ */
+#define PUD_2711_MASK           0x3
+#define PUD_2711_REG_OFFSET(p)  ((p) / 16)
+#define PUD_2711_REG_SHIFT(p)   (((p) % 16) * 2)
+
+#define BCM2711_PULL_UP         0x1
+
+/* BCM 2711 has a different mechanism for pin pull-up/down/enable  */
+#define GPIO_PUP_PDN_CNTRL_REG0 57      /* Pin pull-up/down for pins 15:0  */
+#define GPIO_PUP_PDN_CNTRL_REG1 58      /* Pin pull-up/down for pins 31:16 */
+#define GPIO_PUP_PDN_CNTRL_REG2 59      /* Pin pull-up/down for pins 47:32 */
+#define GPIO_PUP_PDN_CNTRL_REG3 60      /* Pin pull-up/down for pins 57:48 */
+
+
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,15,0)
 #define HAVE_TIMER_SETUP
 #endif
 
 static volatile unsigned *gpio;
 static volatile unsigned *bsc1;
+static int is_2711;
 
 struct mk_config {
     int args[MK_MAX_DEVICES];
@@ -355,6 +375,22 @@ static void mk_mcp23017_read_packet(struct mk_pad * pad, unsigned char *data) {
     }
 }
 
+static void set_gpio_pullups_2711(int gpio_map[]) {
+    int i;
+    for (i = 0; i < mk_max_arcade_buttons; i++) {
+        if (gpio_map[i] != -1) {
+            u32 pud_reg = GPIO_PUP_PDN_CNTRL_REG0
+                          + PUD_2711_REG_OFFSET(gpio_map[i]);
+            u32 shift = PUD_2711_REG_SHIFT(gpio_map[i]);
+            u32 val = *(gpio + pud_reg);
+            val &= ~(PUD_2711_MASK << shift);
+            val |= (BCM2711_PULL_UP << shift);
+            *(gpio + pud_reg) = val;
+        }
+    }
+
+}
+
 static void mk_gpio_read_packet(struct mk_pad * pad, unsigned char *data) {
     int i;
 
@@ -508,10 +544,10 @@ static int __init mk_setup_pad(struct mk *mk, int idx, int pad_type_arg) {
 
     if (pad_type != MK_ARCADE_MCP23017)
     {
-	for (i = 0; i < mk_max_arcade_buttons; i++)
+	for (i = 0; i < mk_max_arcade_buttons - 4; i++)
 			__set_bit(mk_arcade_gpio_btn[i], input_dev->keybit);
     } else { //Checking for MCP23017 so it gets 4 more buttons registered to it.
-		for (i = 0; i < mk_max_mcp_arcade_buttons; i++)
+		for (i = 0; i < mk_max_mcp_arcade_buttons - 4; i++)
 			__set_bit(mk_arcade_gpio_btn[i], input_dev->keybit);
     }
 
@@ -539,13 +575,19 @@ static int __init mk_setup_pad(struct mk *mk, int idx, int pad_type_arg) {
     // initialize gpio if not MCP23017, else initialize i2c
     if(pad_type != MK_ARCADE_MCP23017){
         for (i = 0; i < mk_max_arcade_buttons; i++) {
-            printk("GPIO = %d\n", pad->gpio_maps[i]);
+            pr_debug("GPIO = %d\n", pad->gpio_maps[i]);
             if(pad->gpio_maps[i] != -1){    // to avoid unused buttons
                  setGpioAsInput(pad->gpio_maps[i]);
             }                
         }
-        setGpioPullUps(getPullUpMask(pad->gpio_maps));
-        printk("GPIO configured for pad%d\n", idx);
+        is_2711 = *(gpio+GPIO_PUP_PDN_CNTRL_REG3) != 0x6770696f;
+        if (is_2711) {
+            set_gpio_pullups_2711(pad->gpio_maps);
+        } else {
+            setGpioPullUps(getPullUpMask(pad->gpio_maps));
+        }
+
+        pr_info("GPIO configured for pad%d\n", idx);
     }else{
         i2c_init();
         udelay(1000);
