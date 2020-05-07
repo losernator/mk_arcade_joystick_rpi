@@ -544,10 +544,10 @@ static int __init mk_setup_pad(struct mk *mk, int idx, int pad_type_arg) {
 
     if (pad_type != MK_ARCADE_MCP23017)
     {
-	for (i = 0; i < mk_max_arcade_buttons; i++)
+	for (i = 0; i < mk_max_arcade_buttons - 4; i++)
 			__set_bit(mk_arcade_gpio_btn[i], input_dev->keybit);
     } else { //Checking for MCP23017 so it gets 4 more buttons registered to it.
-		for (i = 0; i < mk_max_mcp_arcade_buttons; i++)
+		for (i = 0; i < mk_max_mcp_arcade_buttons - 4; i++)
 			__set_bit(mk_arcade_gpio_btn[i], input_dev->keybit);
     }
 
@@ -575,7 +575,7 @@ static int __init mk_setup_pad(struct mk *mk, int idx, int pad_type_arg) {
     // initialize gpio if not MCP23017, else initialize i2c
     if(pad_type != MK_ARCADE_MCP23017){
         for (i = 0; i < mk_max_arcade_buttons; i++) {
-            printk("GPIO = %d\n", pad->gpio_maps[i]);
+            pr_debug("GPIO = %d\n", pad->gpio_maps[i]);
             if(pad->gpio_maps[i] != -1){    // to avoid unused buttons
                  setGpioAsInput(pad->gpio_maps[i]);
             }                
@@ -587,7 +587,7 @@ static int __init mk_setup_pad(struct mk *mk, int idx, int pad_type_arg) {
             setGpioPullUps(getPullUpMask(pad->gpio_maps));
         }
 
-        printk("GPIO configured for pad%d\n", idx);
+        pr_info("GPIO configured for pad%d\n", idx);
     }else{
         i2c_init();
         udelay(1000);
